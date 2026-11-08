@@ -34,7 +34,8 @@ public final class PackTool {
         File out = new File(args[3]);
         String meta = "Wiktionary (" + ("en".equals(target) ? "English" : "Russian") + " edition) via kaikki.org"
                 + " (wiktextract), CC BY-SA 4.0 / GFDL; " + lang + "-" + target;
-        KaikkiReader kaikki = new KaikkiReader(lang);
+        // В русском Викисловаре китайский (путунхуа) записан кодом cmn, в английском — zh.
+        KaikkiReader kaikki = new KaikkiReader("zh".equals(lang) && "ru".equals(target) ? "cmn" : lang);
         try (InputStream in = new GZIPInputStream(new FileInputStream(args[2]), 1 << 16)) {
             kaikki.read(in);
         }
