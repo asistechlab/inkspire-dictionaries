@@ -1,0 +1,104 @@
+name: Собрать словари
+
+# Запускается сам при каждой отправке в main и вручную (Actions → «Собрать словари» → Run workflow).
+# Для каждого языка собираются две пары: «язык → English» (английское издание Викисловаря)
+# и «язык → русский» (русское издание). Результат — один релиз с файлами, SHA256SUMS.txt и catalog.json.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { lang: fr, name: French }
+          - { lang: es, name: Spanish }
+          - { lang: de, name: German }
+          - { lang: it, name: Italian }
+          - { lang: pt, name: Portuguese }
+          - { lang: ja, name: Japanese }
+          - { lang: zh, name: Chinese }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Скачать Gson и выгрузки Викисловаря
+        run: |
+          mkdir -p work out
+          curl -fsSL -o work/gson.jar https://repo1.maven.org/maven2/com/google/code/gson/gson/2.14.0/gson-2.14.0.jar
+          curl -fSL --retry 5 -o work/en.jsonl.gz \
+            "https://kaikki.org/dictionary/${{ matrix.name }}/kaikki.org-dictionary-${{ matrix.name }}.jsonl.gz"
+          curl -fSL --retry 5 -o work/ru.jsonl.gz \
+            "https://kaikki.org/dictionary/downloads/ru/ru-extract.jsonl.gz"
+          ls -la work
+
+      - name: Собрать сборщик
+        run: |
+          mkdir -p work/classes
+          javac -encoding UTF-8 --release 11 -cp work/gson.jar -d work/classes $(find src -name '*.java')
+
+      - name: Словарь «${{ matrix.lang }} → English»
+        run: java -Xmx5g -cp "work/classes:work/gson.jar" com.asis.inkspire.dictionary.PackTool ${{ matrix.lang }} en work/en.jsonl.gz out
+
+      - name: Словарь «${{ matrix.lang }} → русский»
+        run: java -Xmx5g -cp "work/classes:work/gson.jar" com.asis.inkspire.dictionary.PackTool ${{ matrix.lang }} ru work/ru.jsonl.gz out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pack-${{ matrix.lang }}
+          path: out/*.gz
+
+  release:
+    needs: build
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pack-*
+          merge-multiple: true
+          path: out
+
+      - name: Каталог и контрольные суммы
+        run: |
+          cd out
+          ls -la
+          sha256sum *.gz > SHA256SUMS.txt
+          python3 - <<'PY'
+          import hashlib, json, os
+          packs = []
+          for f in sorted(os.listdir('.')):
+              if not f.endswith('.dict.gz') or f.endswith('-forms.dict.gz'):
+                  continue
+              pid = f[:-len('.dict.gz')]
+              src, dst = pid.split('-')
+              forms = pid + '-forms.dict.gz'
+              def sha(name):
+                  return hashlib.sha256(open(name, 'rb').read()).hexdigest()
+              packs.append({
+                  'id': pid, 'from': src, 'to': dst,
+                  'file': f, 'size': os.path.getsize(f), 'sha256': sha(f),
+                  'forms': forms, 'formsSize': os.path.getsize(forms), 'formsSha256': sha(forms),
+              })
+          json.dump({'version': 1, 'packs': packs}, open('catalog.json', 'w'), ensure_ascii=False, indent=1)
+          print(len(packs), 'packs')
+          PY
+
+      - name: Выложить релиз
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "dictionaries-${{ github.run_number }}" out/* --repo "${{ github.repository }}" \
+            --title "Словари (сборка ${{ github.run_number }})" --latest \
+            --notes "Словари Inkspire: язык → English и язык → русский. Источник — Викисловарь через kaikki.org (CC BY-SA 4.0 / GFDL), см. CREDITS.md. Каталог для приложения: catalog.json."
