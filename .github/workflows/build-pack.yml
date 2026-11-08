@@ -25,6 +25,22 @@ jobs:
           - { lang: pt, name: Portuguese }
           - { lang: ja, name: Japanese }
           - { lang: zh, name: Chinese }
+          - { lang: ko, name: Korean }
+          - { lang: pl, name: Polish }
+          - { lang: uk, name: Ukrainian }
+          - { lang: tr, name: Turkish }
+          - { lang: nl, name: Dutch }
+          - { lang: ar, name: Arabic }
+          - { lang: hi, name: Hindi }
+          - { lang: cs, name: Czech }
+          - { lang: sv, name: Swedish }
+          - { lang: el, name: Greek }
+          - { lang: he, name: Hebrew }
+          - { lang: la, name: Latin }
+          - { lang: vi, name: Vietnamese }
+          - { lang: id, name: Indonesian }
+          - { lang: fa, name: Persian }
+          - { lang: th, name: Thai }
     steps:
       - uses: actions/checkout@v4
 
@@ -84,10 +100,14 @@ jobs:
               pid = f[:-len('.dict.gz')]
               src, dst = pid.split('-')
               forms = pid + '-forms.dict.gz'
+              if os.path.getsize(f) < 1000:
+                  continue  # пустой словарь (в этом издании Викисловаря нет такого языка)
               def sha(name):
                   return hashlib.sha256(open(name, 'rb').read()).hexdigest()
               packs.append({
                   'id': pid, 'from': src, 'to': dst,
+                  # to=en — основной путь (русский — через английский), to=ru — необязательная добавка
+                  'role': 'main' if dst == 'en' else 'extra',
                   'file': f, 'size': os.path.getsize(f), 'sha256': sha(f),
                   'forms': forms, 'formsSize': os.path.getsize(forms), 'formsSha256': sha(forms),
               })
