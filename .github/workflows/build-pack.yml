@@ -2,7 +2,7 @@ name: Собрать словари
 
 # Запускается сам при каждой отправке в main и вручную (Actions → «Собрать словари» → Run workflow).
 # Для каждого языка собираются две пары: «язык → English» (английское издание Викисловаря)
-# и «язык → русский» (русское издание). Результат — один релиз с файлами, SHA256SUMS.txt и catalog.json.
+# и «язык → русский» (русское издание), плюс «English → язык» (переводы из английских статей + инверсия). Результат — один релиз с файлами, SHA256SUMS.txt и catalog.json.
 on:
   push:
     branches: [main]
@@ -57,6 +57,8 @@ jobs:
             "https://kaikki.org/dictionary/${{ matrix.name }}/kaikki.org-dictionary-${{ matrix.name }}.jsonl.gz"
           curl -fSL --retry 5 -o work/ru.jsonl.gz \
             "https://kaikki.org/dictionary/downloads/ru/ru-extract.jsonl.gz"
+          # Английские статьи Викисловаря (поле translations) — для пакетов «English → язык»
+          curl -fSL --retry 5 -o work/english.jsonl.gz             "https://kaikki.org/dictionary/English/kaikki.org-dictionary-English.jsonl.gz"
           ls -la work
 
       - name: Собрать сборщик
@@ -69,6 +71,9 @@ jobs:
 
       - name: Словарь «${{ matrix.lang }} → русский»
         run: java -Xmx5g -cp "work/classes:work/gson.jar" com.asis.inkspire.dictionary.PackTool ${{ matrix.lang }} ru work/ru.jsonl.gz out
+
+      - name: Словарь «English → ${{ matrix.lang }}»
+        run: java -Xmx5g -cp "work/classes:work/gson.jar" com.asis.inkspire.dictionary.PackTool ${{ matrix.lang }} to work/en.jsonl.gz work/english.jsonl.gz out
 
       - uses: actions/upload-artifact@v4
         with:
@@ -100,6 +105,7 @@ jobs:
               pid = f[:-len('.dict.gz')]
               src, dst = pid.split('-')
               forms = pid + '-forms.dict.gz'
+              has_forms = os.path.exists(forms)  # у пакетов «English → язык» таблицы форм нет
               if os.path.getsize(f) < 1000:
                   continue  # пустой словарь (в этом издании Викисловаря нет такого языка)
               def sha(name):
@@ -107,10 +113,11 @@ jobs:
               packs.append({
                   'id': pid, 'from': src, 'to': dst,
                   # to=en — основной путь (русский — через английский), to=ru — необязательная добавка
-                  'role': 'main' if dst == 'en' else 'extra',
+                  'role': 'main' if (dst == 'en' or src == 'en') else 'extra',
                   'file': f, 'size': os.path.getsize(f), 'sha256': sha(f),
-                  'forms': forms, 'formsSize': os.path.getsize(forms), 'formsSha256': sha(forms),
               })
+              if has_forms:
+                  packs[-1].update({'forms': forms, 'formsSize': os.path.getsize(forms), 'formsSha256': sha(forms)})
           json.dump({'version': 1, 'packs': packs}, open('catalog.json', 'w'), ensure_ascii=False, indent=1)
           print(len(packs), 'packs')
           PY

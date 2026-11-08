@@ -23,8 +23,13 @@ public final class PackTool {
     }
 
     public static void main(String[] args) throws IOException {
+        if (args.length >= 5 && "to".equals(args[1])) {
+            buildEnglishTo(args[0], args[2], args[3], new File(args[4]));
+            return;
+        }
         if (args.length < 4) {
-            throw new IllegalArgumentException("Нужно: <код языка> <en|ru> <kaikki .jsonl.gz> <папка вывода>");
+            throw new IllegalArgumentException("Нужно: <код языка> <en|ru> <kaikki .jsonl.gz> <папка вывода>"
+                    + " или <код языка> to <выгрузка языка (en-издание)> <выгрузка English> <папка вывода>");
         }
         String lang = args[0];
         String target = args[1];
@@ -45,6 +50,28 @@ public final class PackTool {
         byte[] dict = new DictionaryBuilder().addMissing(kaikki.entries).build(meta);
         write(new File(out, name + ".dict.gz"), dict);
         write(new File(out, name + "-forms.dict.gz"), kaikki.buildForms(DictionaryFile.of(dict), meta + " forms"));
+    }
+
+    /**
+     * Пакет «English → язык» ({@code en-<код>.dict.gz}): переводы из английских статей Викисловаря (поле
+     * {@code translations}), а недостающие слова — инверсией готового «язык → English» (однословные значения).
+     */
+    static void buildEnglishTo(String lang, String langDump, String englishDump, File out) throws IOException {
+        EnglishTranslationsReader tr = new EnglishTranslationsReader(lang);
+        try (InputStream in = new GZIPInputStream(new FileInputStream(englishDump), 1 << 16)) {
+            tr.read(in);
+        }
+        KaikkiReader back = new KaikkiReader(lang);
+        try (InputStream in = new GZIPInputStream(new FileInputStream(langDump), 1 << 16)) {
+            back.read(in);
+        }
+        String name = "en-" + lang;
+        System.out.println(name + ": " + tr.entries.size() + " статей из translations, " + back.entries.size()
+                + " статей для инверсии");
+        String meta = "Wiktionary (English edition) via kaikki.org (wiktextract), CC BY-SA 4.0 / GFDL; " + name;
+        Files.createDirectories(out.toPath());
+        byte[] dict = new DictionaryBuilder().addEntries(tr.entries, true).addInverted(back.entries).build(meta);
+        write(new File(out, name + ".dict.gz"), dict);
     }
 
     private static void write(File f, byte[] data) throws IOException {
