@@ -77,6 +77,9 @@ public final class KaikkiReader {
             return;
         }
         String pos = pos(str(o, "pos"));
+        if (pos != null && pos.equals("character") && !isCjk(str(o, "lang_code"))) {
+            pos = null; // буквы алфавита — не слова
+        }
         if (pos == null) {
             return;
         }
@@ -98,6 +101,7 @@ public final class KaikkiReader {
             }
             addForm(form, lemmaKey);
         }
+        entry.pron = reading(o, word);
         for (JsonElement se : arr(o, "senses")) {
             JsonObject s = se.getAsJsonObject();
             JsonArray formOf = arr(s, "form_of");
@@ -126,6 +130,102 @@ public final class KaikkiReader {
         if (!entry.senses.isEmpty()) {
             entries.add(entry);
         }
+    }
+
+    /**
+     * Чтение слова: японский — кана и ромадзи («あう (au)»), китайский — пиньинь, корейский — романизация.
+     * Для остальных языков пусто (у них есть IPA, но карточке он не нужен).
+     */
+    static String reading(JsonObject o, String word) {
+        String code = str(o, "lang_code");
+        JsonArray sounds = arr(o, "sounds");
+        if (code.equals("zh") || code.equals("cmn")) {
+            for (JsonElement e : sounds) {
+                JsonObject s = e.getAsJsonObject();
+                Set<String> t = tags(s);
+                if (t.contains("Pinyin") && t.contains("Mandarin") && !str(s, "zh_pron").isEmpty()) {
+                    return str(s, "zh_pron").trim();
+                }
+            }
+            return "";
+        }
+        if (code.equals("ko")) {
+            for (JsonElement e : sounds) {
+                String r = str(e.getAsJsonObject(), "romanization");
+                if (!r.isEmpty()) {
+                    return r.trim();
+                }
+            }
+            return "";
+        }
+        if (!code.equals("ja")) {
+            return "";
+        }
+        String kana = "";
+        for (JsonElement e : sounds) {
+            JsonObject s = e.getAsJsonObject();
+            String other = str(s, "other").trim();
+            if (!other.isEmpty() && !s.has("note") && isKana(other)) {
+                kana = other;
+                break;
+            }
+        }
+        String romaji = "";
+        for (JsonElement fe : arr(o, "forms")) {
+            JsonObject f = fe.getAsJsonObject();
+            if (tags(f).contains("romanization") && romaji.isEmpty()) {
+                romaji = str(f, "form").trim();
+            }
+            if (kana.isEmpty() && tags(f).contains("canonical") && f.has("ruby")) {
+                kana = fromRuby(str(f, "form"), f.get("ruby"));
+            }
+        }
+        if (kana.isEmpty() || kana.equals(word)) {
+            kana = "";
+        }
+        if (kana.isEmpty()) {
+            return romaji;
+        }
+        return romaji.isEmpty() ? kana : kana + " (" + romaji + ")";
+    }
+
+    private static boolean isCjk(String code) {
+        return code.equals("ja") || code.equals("zh") || code.equals("cmn");
+    }
+
+    private static boolean isKana(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (!(c >= 'ぁ' && c <= 'ヿ')) {
+                return false;
+            }
+        }
+        return !s.isEmpty();
+    }
+
+    /** «会う» + [[«会», «あ»]] → «あう»; пусто, если не удалось. */
+    private static String fromRuby(String form, JsonElement ruby) {
+        if (ruby == null || !ruby.isJsonArray()) {
+            return "";
+        }
+        StringBuilder b = new StringBuilder();
+        int pos = 0;
+        for (JsonElement p : ruby.getAsJsonArray()) {
+            if (!p.isJsonArray() || p.getAsJsonArray().size() < 2) {
+                return "";
+            }
+            String base = p.getAsJsonArray().get(0).getAsString();
+            String kana = p.getAsJsonArray().get(1).getAsString();
+            int at = form.indexOf(base, pos);
+            if (at < 0) {
+                return "";
+            }
+            b.append(form, pos, at).append(kana);
+            pos = at + base.length();
+        }
+        b.append(form.substring(pos));
+        String r = b.toString();
+        return isKana(r) ? r : "";
     }
 
     private void addForm(String form, String lemmaKey) {
@@ -177,6 +277,9 @@ public final class KaikkiReader {
             case "proverb": return "proverb";
             case "det": return "determiner";
             case "participle": return "participle";
+            case "prefix": return "prefix";
+            case "suffix": return "suffix";
+            case "character": return "character"; // китайский и японский: отдельный иероглиф
             default: return null;
         }
     }
